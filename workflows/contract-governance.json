@@ -1,0 +1,168 @@
+{
+  "name": "Contract Governance Suite",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1",
+      "name": "Manual Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Validate contract metadata\nconst payload = items[0].json;\nconst required = ['contractId','vendor','title','startDate','endDate','totalValue','currency','riskRating'];\nconst errors = required.filter((key) => !payload[key]);\nif (errors.length) { throw new Error('Missing fields: ' + errors.join(', ')); }\nreturn items;"
+      },
+      "id": "2",
+      "name": "Validate Contract",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [450, 200]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Normalize schedule entries\nconst schedules = Array.isArray(items[0].json.schedule) ? items[0].json.schedule : [];\nreturn schedules.map((entry) => ({ json: { ...entry, risk: entry.status === 'blocked' ? 'high' : 'normal' }}));"
+      },
+      "id": "3",
+      "name": "Normalize Schedule",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [700, 100]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Create reminders for upcoming document due dates\nconst reminders = (Array.isArray(items[0].json.documents) ? items[0].json.documents : [])\n  .filter((doc) => doc.dueDate)\n  .map((doc) => ({ json: { documentName: doc.name, owner: doc.owner, dueDate: doc.dueDate, channel: doc.channel || 'email' } }));\nreturn reminders;"
+      },
+      "id": "4",
+      "name": "Generate Reminders",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Compare spend against committed budget\nconst budget = items[0].json.budget;\nif (!budget) { return [{ json: { status: 'no-budget' } }]; }\nconst variance = budget.spent - budget.committed;\nconst status = variance > 0 ? 'overrun' : 'on-track';\nreturn [{ json: { ...budget, variance, status } }];"
+      },
+      "id": "5",
+      "name": "Budget Monitor",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [700, 500]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Validate variation orders and route for approval\nconst variation = items[0].json.variation;\nif (!variation) { return [{ json: { status: 'no-variation' } }]; }\nif (!variation.description || !variation.estimatedImpact) { throw new Error('Variation missing description or estimatedImpact'); }\nreturn [{ json: { ...variation, approvalPath: variation.estimatedImpact > 50000 ? 'executive' : 'project' } }];"
+      },
+      "id": "6",
+      "name": "Process Variation",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [700, 700]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Compliance checkpoints based on clauses\nconst checkpoints = Array.isArray(items[0].json.compliance) ? items[0].json.compliance : [];\nconst enriched = checkpoints.map((checkpoint) => ({ ...checkpoint, status: checkpoint.status || 'pending' }));\nconst summary = enriched.reduce((acc, cp) => { acc[cp.status] = (acc[cp.status] || 0) + 1; return acc; }, {});\nreturn [{ json: { checkpoints: enriched, summary } }];"
+      },
+      "id": "7",
+      "name": "Compliance Check",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [700, 900]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [],
+          "number": [],
+          "string": [
+            {
+              "value1": "={{$json[\"status\"]}}",
+              "operation": "notEqual",
+              "value2": "approved"
+            }
+          ]
+        }
+      },
+      "id": "8",
+      "name": "Escalation Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [950, 700]
+    },
+    {
+      "parameters": {
+        "fromEmail": "contracts@company.test",
+        "toEmail": "={{$json[\"owner\"] || 'pm@company.test'}}",
+        "subject": "Compliance or budget alert",
+        "text": "A contract workflow raised an alert. See payload for details."
+      },
+      "id": "9",
+      "name": "Email Escalation",
+      "type": "n8n-nodes-base.email",
+      "typeVersion": 1,
+      "position": [1200, 700]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Collate outputs\nreturn [{ json: { contract: $item(0).$node['Validate Contract'].json, schedule: $item(0).$node['Normalize Schedule'].json, reminders: $items('Generate Reminders').map(i => i.json), budget: $item(0).$node['Budget Monitor'].json, variation: $item(0).$node['Process Variation'].json, compliance: $item(0).$node['Compliance Check'].json } }];"
+      },
+      "id": "10",
+      "name": "Assemble Report",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [950, 400]
+    }
+  ],
+  "connections": {
+    "Manual Start": {
+      "main": [
+        [
+          {
+            "node": "Validate Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Contract": {
+      "main": [
+        [
+          { "node": "Normalize Schedule", "type": "main", "index": 0 },
+          { "node": "Generate Reminders", "type": "main", "index": 0 },
+          { "node": "Budget Monitor", "type": "main", "index": 0 },
+          { "node": "Process Variation", "type": "main", "index": 0 },
+          { "node": "Compliance Check", "type": "main", "index": 0 },
+          { "node": "Assemble Report", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Process Variation": {
+      "main": [
+        [
+          {
+            "node": "Escalation Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalation Needed?": {
+      "main": [
+        [
+          {
+            "node": "Email Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "id": "contract-governance-suite"
+}
